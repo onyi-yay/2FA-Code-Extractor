@@ -1,0 +1,195 @@
+{
+  "name": "2FA Code Extractor",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "2fa-code-request",
+        "formTitle": "Get Your Verification Code",
+        "formDescription": "Just signed up or logging in and need the verification code? Enter your name below and we'll grab it for you instantly.\n\nTip: Submit this form right after you see the \"Enter your code\" screen — codes expire in a few minutes!",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Full Name",
+              "placeholder": "Enter your full name",
+              "requiredField": true
+            }
+          ]
+        },
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a1b2c3d4-1111-4aaa-bbbb-000000000001",
+      "name": "Form Trigger",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "2fa-code-form-webhook"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1111-4aaa-bbbb-000000000002",
+      "name": "Log Request to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        240,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "0AF65HhuihhOuxr5",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 5,
+        "filters": {
+          "q": "newer_than:15m (verification OR \"verify your\" OR \"security code\" OR \"confirmation code\" OR \"login code\" OR OTP OR \"one-time\" OR \"2FA\")",
+          "readStatus": "unread"
+        }
+      },
+      "id": "a1b2c3d4-1111-4aaa-bbbb-000000000003",
+      "name": "Gmail - Fetch Recent 2FA Emails",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Hz5psDYjZhDl2tVm",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract 2FA code and build the response message\nconst items = $input.all();\nconst userName = $('Form Trigger').first().json['Full Name'] || 'User';\n\nlet code = null;\nlet emailSubject = '';\nlet emailFrom = '';\n\nfor (const item of items) {\n  const body = item.json.snippet || item.json.textPlain || item.json.text || item.json.body || '';\n  emailSubject = item.json.subject || '';\n  emailFrom = item.json.from || '';\n\n  // Strategy 1: Code/OTP patterns near keywords\n  const keywordPatterns = [\n    /(?:verification|verify|security|confirmation|login|access|authentication|sign[- ]?in|one[- ]?time)\\s*(?:code|pin|OTP|number)[\\s:]*[\\(\\[]?\\s*([A-Z0-9]{4,8})\\s*[\\)\\]]?/i,\n    /(?:code|pin|OTP|token)[\\s:]+[\\(\\[]?\\s*([A-Z0-9]{4,8})\\s*[\\)\\]]?/i,\n    /(?:enter|use|input|submit|type)\\s+(?:the\\s+)?(?:code\\s+)?[\\(\\[]?\\s*([0-9]{4,8})\\s*[\\)\\]]?/i,\n    /\\b([0-9]{4,8})\\b(?=.*(?:expires?|valid|minutes?|mins?))/i,\n    /(?:is|:|=)\\s*\\*?\\s*([0-9]{4,8})\\s*\\*?/i\n  ];\n\n  for (const pattern of keywordPatterns) {\n    const match = body.match(pattern);\n    if (match && match[1]) {\n      code = match[1];\n      break;\n    }\n  }\n\n  // Strategy 2: Code in subject line\n  if (!code) {\n    const subjectMatch = emailSubject.match(/\\b([0-9]{4,8})\\b/);\n    if (subjectMatch && subjectMatch[1]) {\n      code = subjectMatch[1];\n    }\n  }\n\n  // Strategy 3: Standalone 6-digit number\n  if (!code) {\n    const standaloneMatch = body.match(/(?:^|\\s)([0-9]{6})(?:\\s|$|\\.|,)/m);\n    if (standaloneMatch && standaloneMatch[1]) {\n      code = standaloneMatch[1];\n    }\n  }\n\n  if (code) break;\n}\n\n// Build the response message\nlet message;\nif (code) {\n  message = 'Hi ' + userName + '!';\n  message += '\\n\\n=============================';\n  message += '\\n   YOUR CODE:  ' + code;\n  message += '\\n=============================';\n  message += '\\n\\nGo enter this code now — it expires in a few minutes.';\n  message += '\\n\\nIf this code doesn\\'t work, you may need to request a new one from the platform and submit this form again.';\n} else {\n  message = 'Hi ' + userName + ',';\n  message += '\\n\\nWe couldn\\'t find a verification code just yet.';\n  message += '\\n\\nThis usually happens when:';\n  message += '\\n\\n  1. The email is still on its way — wait about 30 seconds and try again';\n  message += '\\n  2. The code already expired — go back to the platform, request a new code, then submit this form immediately';\n  message += '\\n\\nStill not working? Reach out to the admin for help.';\n}\n\nreturn { message: message };"
+      },
+      "id": "a1b2c3d4-1111-4aaa-bbbb-000000000004",
+      "name": "Extract 2FA Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.message }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-1111-4aaa-bbbb-000000000006",
+      "name": "Respond to User",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Form Trigger": {
+      "main": [
+        [
+          {
+            "node": "Log Request to Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Request to Sheet": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Fetch Recent 2FA Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Fetch Recent 2FA Emails": {
+      "main": [
+        [
+          {
+            "node": "Extract 2FA Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract 2FA Code": {
+      "main": [
+        [
+          {
+            "node": "Respond to User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "00000000-0000-0000-0000-000000000002",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "3f1530bbb070a5f62a3660cccf9ac589bea24f691ed00838512f259ed2005e91"
+  },
+  "id": "2FA_CODE_EXTRACTOR_001",
+  "tags": [
+    {
+      "createdAt": "2026-03-11T00:00:00.000Z",
+      "updatedAt": "2026-03-11T00:00:00.000Z",
+      "id": "tag_2fa_001",
+      "name": "2FA"
+    },
+    {
+      "createdAt": "2026-03-11T00:00:00.000Z",
+      "updatedAt": "2026-03-11T00:00:00.000Z",
+      "id": "tag_2fa_002",
+      "name": "code extractor"
+    },
+    {
+      "createdAt": "2026-03-11T00:00:00.000Z",
+      "updatedAt": "2026-03-11T00:00:00.000Z",
+      "id": "tag_2fa_003",
+      "name": "email"
+    }
+  ]
+}
