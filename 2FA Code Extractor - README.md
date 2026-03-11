@@ -17,14 +17,15 @@ This workflow gives users a simple form link. They fill in their name, and the w
 ## How It Works
 
 ```
-User fills form  -->  Request logged  -->  Gmail searched  -->  Code extracted  -->  Code displayed
+User fills form  -->  Timestamp added  -->  Request logged  -->  Gmail searched  -->  Code extracted  -->  Code displayed
 ```
 
 1. **User opens the form link** and enters their name
-2. **Request is logged** to a Google Sheet (audit trail)
-3. **Gmail is searched** for unread 2FA emails from the last 15 minutes
-4. **The code is extracted** using pattern matching (supports 4-8 digit/alphanumeric codes)
-5. **The code is displayed** directly on the form response page
+2. **A timestamp is generated** and attached to the request data
+3. **Request is logged** to a Google Sheet (name + timestamp for audit trail)
+4. **Gmail is searched** for unread 2FA emails from the last 15 minutes
+5. **The code is extracted** using pattern matching (supports 4-8 digit/alphanumeric codes)
+6. **The code is displayed** directly on the form response page
 
 The entire process takes a few seconds.
 
@@ -35,10 +36,11 @@ The entire process takes a few seconds.
 | # | Node | Purpose |
 |---|------|---------|
 | 1 | **Form Trigger** | Web form where users enter their name |
-| 2 | **Log Request to Sheet** | Logs the request to Google Sheets for tracking |
-| 3 | **Gmail - Fetch Recent 2FA Emails** | Searches Gmail for unread verification emails (last 15 min) |
-| 4 | **Extract 2FA Code** | Parses the email body/subject to find the code, builds the response |
-| 5 | **Respond to User** | Displays the result to the user on the form page |
+| 2 | **Prepare Log Data** | Attaches a timestamp to the form data before logging |
+| 3 | **Log Request to Sheet** | Appends name + timestamp to Google Sheets for audit trail |
+| 4 | **Gmail - Fetch Recent 2FA Emails** | Searches Gmail for unread verification emails (last 15 min) |
+| 5 | **Extract 2FA Code** | Parses the email body/subject to find the code, builds the response |
+| 6 | **Respond to User** | Displays the result to the user on the form page |
 
 ---
 
@@ -55,23 +57,37 @@ The entire process takes a few seconds.
    - In n8n, go to **Workflows > Import from File**
    - Select `2FA Code Extractor.json`
 
-2. **Configure Google Sheets node**
-   - Open the **Log Request to Sheet** node
-   - Select your Google Sheet from the **Document** dropdown (or create a new one)
-   - Select the sheet tab from the **Sheet** dropdown
-   - Make sure the sheet has two column headers: `Full Name` and `Timestamp`
+2. **Prepare your Google Sheet**
+   - Create a new Google Sheet (or use an existing one)
+   - Add exactly two column headers in row 1: `Full Name` and `Timestamp`
+   - Headers must match exactly — case-sensitive, no extra spaces
 
-3. **Verify Gmail credentials**
+3. **Configure the Log Request to Sheet node**
+   - Open the **Log Request to Sheet** node
+   - Select your Google Sheet from the **Document** dropdown
+   - Select the sheet tab from the **Sheet** dropdown
+   - Operation must be set to **Append Row**
+   - Mapping mode must be set to **Auto Map Input Data**
+   - After selecting the sheet, re-select both dropdowns to force n8n to refresh the column list
+
+4. **Verify Gmail credentials**
    - Open the **Gmail - Fetch Recent 2FA Emails** node
    - Confirm your Gmail OAuth2 credential is connected
    - This must be the Gmail account that receives the 2FA codes
 
-4. **Test the workflow**
+5. **Update the Respond to User node**
+   - Open the **Respond to User** node
+   - Click **Add Option** → **Response Headers**
+   - Add header: Name = `Content-Type`, Value = `text/html`
+   - This enables the styled HTML response page
+
+6. **Test the workflow**
    - Click the **Form Trigger** node and copy the **Test URL**
    - Open the URL in a browser, enter a name, and submit
    - Trigger a real 2FA code from any platform, then submit the form again to verify extraction
+   - Check your Google Sheet — both the name and timestamp should appear
 
-5. **Activate for production**
+7. **Activate for production**
    - Toggle the **Active** switch in the top-right corner
    - Copy the **Production URL** from the Form Trigger node
    - Share this URL with your users
@@ -80,23 +96,15 @@ The entire process takes a few seconds.
 
 ## What Users See
 
-### When a code is found:
-> Hi [Name]!
->
-> =============================
->    YOUR CODE:  482910
-> =============================
->
-> Go enter this code now — it expires in a few minutes.
+### When a code is found (styled HTML page):
+- Green bordered card with the code displayed large and bold
+- Clear urgency message to use the code immediately
+- Fallback instructions if the code doesn't work
 
-### When no code is found:
-> Hi [Name],
->
-> We couldn't find a verification code just yet.
->
-> This usually happens when:
->   1. The email is still on its way — wait about 30 seconds and try again
->   2. The code already expired — go back to the platform, request a new code, then submit this form immediately
+### When no code is found (styled HTML page):
+- Amber bordered card with a friendly message
+- Two numbered steps explaining what to do next
+- Admin contact suggestion at the bottom
 
 ---
 
@@ -162,6 +170,29 @@ This catches emails from virtually all platforms that send 2FA codes.
 
 ---
 
+## Audit & Logging
+
+Every request is logged to Google Sheets automatically. The **Prepare Log Data** node generates a timestamp at the exact moment the form is submitted and passes it to the Sheets node.
+
+| Column | Value | Notes |
+|--------|-------|-------|
+| `Full Name` | Name entered by the user | From the form |
+| `Timestamp` | ISO 8601 datetime (e.g. `2026-03-11T14:56:46.123Z`) | Generated at time of submission |
+
+The log is written **before** Gmail is searched — so every access attempt is recorded regardless of whether a code was found.
+
+This helps you:
+- Track who is requesting codes and when
+- Identify if someone is submitting excessive requests
+- Maintain a record for accountability
+
+### Important setup notes for logging:
+- The Google Sheets node operation must be **Append Row** (not Append or Update Row)
+- Column headers in the sheet must match exactly: `Full Name` and `Timestamp`
+- After adding new columns to the sheet, re-select the document and sheet dropdowns in the node to refresh n8n's column cache
+
+---
+
 ## Troubleshooting
 
 | Issue | Cause | Fix |
@@ -171,15 +202,10 @@ This catches emails from virtually all platforms that send 2FA codes.
 | Form URL not working | Workflow is not activated | Toggle the Active switch on |
 | "Test URL" works but "Production URL" doesn't | Workflow needs to be active for production URLs | Activate the workflow |
 | User gets an old/expired code | The 15-minute window may include older emails | User should request a fresh code from the platform, then submit immediately |
-
----
-
-## Audit & Logging
-
-Every request is logged to Google Sheets with the user's name and timestamp. This helps you:
-- Track who is requesting codes and when
-- Identify if someone is submitting excessive requests
-- Maintain a record for accountability
+| Name logs to sheet but Timestamp column is empty | n8n cached old column list before Timestamp was added | Re-select the Document and Sheet dropdowns in the Log Request to Sheet node |
+| Nothing logs to sheet at all | Operation set to "Append or Update" without a match column | Change operation to **Append Row** |
+| Response page shows plain text instead of styled HTML | Content-Type header not set | Add `Content-Type: text/html` header in the Respond to User node options |
+| "Code doesn't return items properly" error | Code node returning plain object instead of array | Ensure all Code nodes return `[{ json: { ... } }]` format |
 
 ---
 
@@ -202,7 +228,14 @@ In the **Gmail** node, change `newer_than:15m` to your preferred window (e.g., `
 In the **Gmail** node's query filter, add additional `OR "keyword"` entries to match emails from specific platforms.
 
 ### Change the response format
-In the **Extract 2FA Code** node, modify the `message` variable in the JavaScript code to customize what users see.
+In the **Extract 2FA Code** node, modify the `message` variable in the JavaScript code to customize what users see. The message is built as HTML so standard HTML tags and inline styles apply.
+
+### Host on a custom domain via Netlify
+Create a `_redirects` file in a Netlify site folder with:
+```
+/get-code    https://your-n8n-domain.com/form/your-form-id    200
+```
+Deploy the folder to Netlify. Users visit `your-site.netlify.app/get-code` and the n8n form is served transparently under your domain.
 
 ---
 
@@ -211,3 +244,4 @@ In the **Extract 2FA Code** node, modify the `message` variable in the JavaScrip
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | March 2026 | Initial release — form trigger, Gmail search, code extraction, form response |
+| 1.1 | March 2026 | Added Prepare Log Data node for reliable timestamp logging; fixed Code node return format for n8n Cloud compatibility; changed Sheets operation to Append Row; added HTML response styling |
